@@ -21,6 +21,8 @@ This directory contains common configuration examples for different deployment s
 ### Enterprise Examples (License Required)
 - **[production-s3.yaml](./production-s3.yaml)** - Production setup with multi-main, webhooks, S3 storage, and autoscaling
 - **[multi-main-queue.yaml](./multi-main-queue.yaml)** - Multi-main and queue mode configuration
+- **[multi-main-queue-oracle.yaml](./multi-main-queue-oracle.yaml)** - Multi-main on Oracle Cloud (OKE): OCI PostgreSQL, Redis, Object Storage S3-compatible API
+- **[deploy.sh](./deploy.sh)** - Create namespace and Kubernetes secrets for Oracle / queue mode deployment
 
 
 ## Important Notice

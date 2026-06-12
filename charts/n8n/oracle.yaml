@@ -1,0 +1,1390 @@
+---
+# Source: n8n/templates/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: n8n-main
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: n8n
+      app.kubernetes.io/component: main
+      app.kubernetes.io/instance: n8n
+---
+# Source: n8n/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: n8n-oracle
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: n8n/templates/secret-task-runners.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: n8n-task-runners
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+type: Opaque
+data:
+  N8N_RUNNERS_AUTH_TOKEN: "Q1dJWWJka0MzMU9pSHRwWVRZVFhkdEZ6Q3AxbnVId3A="
+---
+# Source: n8n/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: n8n
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+data:
+  # ----- Shared Configuration (used by all components: main, worker, webhook-processor) -----
+  TZ: "UTC"
+  
+  # Database configuration
+  DB_TYPE: "postgresdb"
+  DB_POSTGRESDB_DATABASE: "n8n"
+  DB_POSTGRESDB_HOST: "postgresql.example.oraclevcn.com"
+  DB_POSTGRESDB_PORT: "5432"
+  DB_POSTGRESDB_USER: "n8n"
+  DB_POSTGRESDB_SCHEMA: "public"
+  DB_POSTGRESDB_SSL: "true"
+  # DB_POSTGRESDB_SSL_KEY is intentionally omitted from this ConfigMap.
+  # TLS private keys must not be stored in ConfigMaps, which are not encrypted
+  # at rest and are readable by anyone with ConfigMap read access in the namespace.
+  # Provide DB_POSTGRESDB_SSL_KEY via config.extraEnv referencing a Secret instead, e.g.:
+  #   config:
+  #     extraEnv:
+  #       - name: DB_POSTGRESDB_SSL_KEY
+  #         valueFrom:
+  #           secretKeyRef:
+  #             name: my-db-ssl-secret
+  #             key: tls.key
+
+  # Queue configuration
+  EXECUTIONS_MODE: "queue"
+  OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS: "true"
+  # Task runner configuration (only emitted when sidecars are enabled,
+  # otherwise n8n uses its built-in internal runner default).
+  # Redis configuration (queue mode only)
+  QUEUE_BULL_REDIS_HOST: "redis.example.oraclevcn.com"
+  QUEUE_BULL_REDIS_PORT: "6379"
+  QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD: "10000"
+  QUEUE_BULL_REDIS_TLS: "true"
+
+  # Worker settings (queue mode only)
+  QUEUE_WORKER_LOCK_DURATION: "60000"
+  QUEUE_WORKER_LOCK_RENEW_TIME: "10000"
+  QUEUE_WORKER_STALLED_INTERVAL: "30000"
+  QUEUE_WORKER_MAX_STALLED_COUNT: "1"
+
+  # Graceful shutdown timeout
+  N8N_GRACEFUL_SHUTDOWN_TIMEOUT: "30"
+  
+  # ----- Main-only Configuration -----
+  WEBHOOK_URL: "https://n8n.example.com"
+  N8N_WEBHOOK_TIMEOUT: "300000"
+  
+  # Editor Base URL (for proper webhook URL display in UI)
+  # Only set when external access is configured to avoid issues with internal-only deployments
+  N8N_EDITOR_BASE_URL: "https://n8n.example.com"
+  
+  # Multi-main setup (main pods only)
+  N8N_MULTI_MAIN_SETUP_ENABLED: "true"
+  N8N_MULTI_MAIN_SETUP_KEY_TTL: "10"
+  N8N_MULTI_MAIN_SETUP_CHECK_INTERVAL: "3"
+  
+  # ----- Webhook Processor Configuration -----
+  # Main process disable (when webhook processors are enabled)
+  N8N_DISABLE_PRODUCTION_MAIN_PROCESS: "true"
+---
+# Source: n8n/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: n8n
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get","list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+# Source: n8n/templates/rolebinding.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: n8n
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: n8n
+subjects:
+  - kind: ServiceAccount
+    name: n8n-oracle
+    namespace: n8n
+---
+# Source: n8n/templates/service-main.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: n8n-main
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/component: main
+    app.kubernetes.io/instance: n8n
+  ports:
+    - name: http
+      port: 5678
+      targetPort: http
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 14400
+---
+# Source: n8n/templates/service-webhook-processor.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: n8n-webhook-processor
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: webhook-processor
+spec:
+  type: ClusterIP
+  ports:
+    - port: 5678
+      targetPort: http
+      protocol: TCP
+      name: http
+  selector:
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/component: webhook-processor
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 14400
+---
+# Source: n8n/templates/deployment-main.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: n8n-main
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: main
+spec:
+  replicas: 3
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: n8n
+      app.kubernetes.io/instance: n8n
+      app.kubernetes.io/component: main
+  template:
+    metadata:
+      annotations:
+        checksum/config: a76b1a454cb37962d3c0dd657130a80ffaebd902cebf5829fe5901f10456490c
+        checksum/secret: 01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b
+      labels:
+        helm.sh/chart: n8n-1.9.0
+        app.kubernetes.io/name: n8n
+        app.kubernetes.io/instance: n8n
+        app.kubernetes.io/version: "stable"
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: main
+    spec:
+      serviceAccountName: n8n-oracle
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+
+      containers:
+        - name: n8n-main
+          image: "docker.n8n.io/n8nio/n8n:stable"
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - sleep 10
+
+          env:
+
+            # Shared configuration from ConfigMap
+            # Shared configuration from ConfigMap
+            - name: TZ
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: TZ
+            - name: DB_TYPE
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_TYPE
+            - name: DB_POSTGRESDB_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_DATABASE
+            - name: DB_POSTGRESDB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_HOST
+            - name: DB_POSTGRESDB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_PORT
+            - name: DB_POSTGRESDB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_USER
+            - name: DB_POSTGRESDB_SCHEMA
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_SCHEMA
+            - name: DB_POSTGRESDB_SSL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_SSL
+            # DB_POSTGRESDB_SSL_KEY is not sourced from the ConfigMap because TLS private keys
+            # must not be stored unencrypted. Provide it via config.extraEnv from a Secret.
+            - name: EXECUTIONS_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: EXECUTIONS_MODE
+            - name: OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS
+            - name: QUEUE_BULL_REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_HOST
+            - name: QUEUE_BULL_REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_PORT
+            - name: QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD
+            - name: QUEUE_BULL_REDIS_TLS
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_TLS
+            - name: QUEUE_WORKER_LOCK_DURATION
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_LOCK_DURATION
+            - name: QUEUE_WORKER_LOCK_RENEW_TIME
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_LOCK_RENEW_TIME
+            - name: QUEUE_WORKER_STALLED_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_STALLED_INTERVAL
+            - name: QUEUE_WORKER_MAX_STALLED_COUNT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_MAX_STALLED_COUNT
+            - name: N8N_GRACEFUL_SHUTDOWN_TIMEOUT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_GRACEFUL_SHUTDOWN_TIMEOUT
+            
+            # Main-specific configuration from ConfigMap
+            
+            - name: WEBHOOK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: WEBHOOK_URL
+            - name: N8N_WEBHOOK_TIMEOUT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_WEBHOOK_TIMEOUT
+            - name: N8N_EDITOR_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_EDITOR_BASE_URL
+            - name: N8N_MULTI_MAIN_SETUP_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_MULTI_MAIN_SETUP_ENABLED
+            - name: N8N_MULTI_MAIN_SETUP_KEY_TTL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_MULTI_MAIN_SETUP_KEY_TTL
+            - name: N8N_MULTI_MAIN_SETUP_CHECK_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_MULTI_MAIN_SETUP_CHECK_INTERVAL
+            - name: N8N_DISABLE_PRODUCTION_MAIN_PROCESS
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_DISABLE_PRODUCTION_MAIN_PROCESS
+            # Database password (secret)
+            - name: DB_POSTGRESDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-db-secret
+                  key: password
+            # Redis password (secret)
+            - name: QUEUE_BULL_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-redis-secret
+                  key: password
+
+            # Health check settings
+
+            # Redis-specific extra environment variables
+
+            # S3 External Storage
+            
+            # S3 External Storage Configuration
+            - name: N8N_DEFAULT_BINARY_DATA_MODE
+              value: "s3"
+            - name: N8N_AVAILABLE_BINARY_DATA_MODES
+              value: "filesystem,s3"
+            - name: N8N_EXTERNAL_STORAGE_S3_BUCKET_NAME
+              value: "n8n-binary-data"
+            - name: N8N_EXTERNAL_STORAGE_S3_BUCKET_REGION
+              value: "us-ashburn-1"
+            - name: N8N_EXTERNAL_STORAGE_S3_HOST
+              value: "axxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com"
+            - name: N8N_EXTERNAL_STORAGE_S3_ACCESS_KEY
+              value: "ocid1.credential.oc1..aaaa..."
+            - name: AWS_ACCESS_KEY_ID
+              value: "ocid1.credential.oc1..aaaa..."
+            - name: N8N_EXTERNAL_STORAGE_S3_ACCESS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oci-s3-credentials
+                  key: secret-access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oci-s3-credentials
+                  key: secret-access-key
+            - name: N8N_EXTERNAL_STORAGE_S3_FORCE_PATH_STYLE
+              value: "true"
+
+            # Executions Configuration
+            # Executions Configuration
+            - name: EXECUTIONS_TIMEOUT
+              value: "7200"
+            - name: EXECUTIONS_TIMEOUT_MAX
+              value: "3600"
+            - name: EXECUTIONS_DATA_SAVE_ON_ERROR
+              value: "all"
+            - name: EXECUTIONS_DATA_SAVE_ON_SUCCESS
+              value: "all"
+            - name: EXECUTIONS_DATA_SAVE_ON_PROGRESS
+              value: "false"
+            - name: EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS
+              value: "true"
+            - name: EXECUTIONS_DATA_PRUNE
+              value: "true"
+            - name: EXECUTIONS_DATA_MAX_AGE
+              value: "2160"
+            - name: EXECUTIONS_DATA_PRUNE_MAX_COUNT
+              value: "100000"
+            - name: EXECUTIONS_DATA_HARD_DELETE_BUFFER
+              value: "1"
+            - name: EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL
+              value: "15"
+            - name: EXECUTIONS_DATA_PRUNE_SOFT_DELETE_INTERVAL
+              value: "60"
+            - name: N8N_CONCURRENCY_PRODUCTION_LIMIT
+              value: "100"
+
+            # License Configuration
+            
+            # License Configuration
+            - name: N8N_LICENSE_ACTIVATION_KEY
+              value: "REPLACE-WITH-ENTERPRISE-LICENSE"
+
+            # Core n8n secrets
+            # Core n8n secrets
+            - name: N8N_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-core-secrets
+                  key: N8N_ENCRYPTION_KEY
+            - name: N8N_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-core-secrets
+                  key: N8N_HOST
+            - name: N8N_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-core-secrets
+                  key: N8N_PORT
+            - name: N8N_PROTOCOL
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-core-secrets
+                  key: N8N_PROTOCOL
+
+            # Task Runners Configuration
+            
+            - name: N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS
+              value: "true"
+            - name: DB_POSTGRESDB_SSL_ENABLED
+              value: "true"
+            - name: DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED
+              value: "true"
+            - name: N8N_LOG_LEVEL
+              value: info
+            - name: N8N_LOG_OUTPUT
+              value: json
+            - name: N8N_CONCURRENCY_PRODUCTION_LIMIT
+              value: "100"
+            - name: N8N_WEBHOOK_TIMEOUT
+              value: "300000"
+
+          ports:
+            - containerPort: 5678
+              name: http
+
+          # Probes
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+          resources:
+            limits:
+              cpu: 2000m
+              memory: 4Gi
+            requests:
+              cpu: 1000m
+              memory: 2Gi
+
+          # Persist n8n home for SQLite DB and files
+          volumeMounts:
+            - name: data
+              mountPath: /home/node/.n8n
+
+      # Volumes: prefer PVC, fallback to emptyDir if persistence disabled
+      volumes:
+        - name: data
+          emptyDir: {}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: n8n
+                    app.kubernetes.io/instance: n8n
+                    app.kubernetes.io/component: main
+                topologyKey: kubernetes.io/hostname
+---
+# Source: n8n/templates/deployment-webhook-processor.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: n8n-webhook-processor
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: webhook-processor
+spec:
+  replicas: 5
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: n8n
+      app.kubernetes.io/instance: n8n
+      app.kubernetes.io/component: webhook-processor
+  template:
+    metadata:
+      annotations:
+        checksum/config: a76b1a454cb37962d3c0dd657130a80ffaebd902cebf5829fe5901f10456490c
+        checksum/secret: 01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b
+      labels:
+        helm.sh/chart: n8n-1.9.0
+        app.kubernetes.io/name: n8n
+        app.kubernetes.io/instance: n8n
+        app.kubernetes.io/version: "stable"
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: webhook-processor
+    spec:
+      serviceAccountName: n8n-oracle
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+
+      containers:
+        - name: n8n-webhook-processor
+          image: "docker.n8n.io/n8nio/n8n:stable"
+          imagePullPolicy: IfNotPresent
+          command: ["n8n"]
+          args: ["webhook"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - sleep 10
+
+          env:
+            # Shared configuration from ConfigMap
+            # Shared configuration from ConfigMap
+            - name: TZ
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: TZ
+            - name: DB_TYPE
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_TYPE
+            - name: DB_POSTGRESDB_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_DATABASE
+            - name: DB_POSTGRESDB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_HOST
+            - name: DB_POSTGRESDB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_PORT
+            - name: DB_POSTGRESDB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_USER
+            - name: DB_POSTGRESDB_SCHEMA
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_SCHEMA
+            - name: DB_POSTGRESDB_SSL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_SSL
+            # DB_POSTGRESDB_SSL_KEY is not sourced from the ConfigMap because TLS private keys
+            # must not be stored unencrypted. Provide it via config.extraEnv from a Secret.
+            - name: EXECUTIONS_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: EXECUTIONS_MODE
+            - name: OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS
+            - name: QUEUE_BULL_REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_HOST
+            - name: QUEUE_BULL_REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_PORT
+            - name: QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD
+            - name: QUEUE_BULL_REDIS_TLS
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_TLS
+            - name: QUEUE_WORKER_LOCK_DURATION
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_LOCK_DURATION
+            - name: QUEUE_WORKER_LOCK_RENEW_TIME
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_LOCK_RENEW_TIME
+            - name: QUEUE_WORKER_STALLED_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_STALLED_INTERVAL
+            - name: QUEUE_WORKER_MAX_STALLED_COUNT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_MAX_STALLED_COUNT
+            - name: N8N_GRACEFUL_SHUTDOWN_TIMEOUT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_GRACEFUL_SHUTDOWN_TIMEOUT
+
+            # Webhook processor-specific configuration from ConfigMap
+            
+            - name: WEBHOOK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: WEBHOOK_URL
+            - name: N8N_WEBHOOK_TIMEOUT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_WEBHOOK_TIMEOUT
+            - name: N8N_EDITOR_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_EDITOR_BASE_URL
+
+            # Database password (secret)
+            - name: DB_POSTGRESDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-db-secret
+                  key: password
+            # Redis password (secret)
+            - name: QUEUE_BULL_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-redis-secret
+                  key: password
+
+            # Redis-specific extra environment variables
+
+            # Webhook-specific extra environment variables
+
+            # ----------------- License (for n8n Enterprise) -----------------
+            - name: N8N_LICENSE_ACTIVATION_KEY
+              value: "REPLACE-WITH-ENTERPRISE-LICENSE"
+
+            # ----------------- Core n8n secrets -----------------
+            - name: N8N_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-core-secrets
+                  key: N8N_ENCRYPTION_KEY
+            - name: N8N_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-core-secrets
+                  key: N8N_HOST
+            - name: N8N_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-core-secrets
+                  key: N8N_PORT
+            - name: N8N_PROTOCOL
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-core-secrets
+                  key: N8N_PROTOCOL
+
+            # S3 External Storage
+            
+            # S3 External Storage Configuration
+            - name: N8N_DEFAULT_BINARY_DATA_MODE
+              value: "s3"
+            - name: N8N_AVAILABLE_BINARY_DATA_MODES
+              value: "filesystem,s3"
+            - name: N8N_EXTERNAL_STORAGE_S3_BUCKET_NAME
+              value: "n8n-binary-data"
+            - name: N8N_EXTERNAL_STORAGE_S3_BUCKET_REGION
+              value: "us-ashburn-1"
+            - name: N8N_EXTERNAL_STORAGE_S3_HOST
+              value: "axxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com"
+            - name: N8N_EXTERNAL_STORAGE_S3_ACCESS_KEY
+              value: "ocid1.credential.oc1..aaaa..."
+            - name: AWS_ACCESS_KEY_ID
+              value: "ocid1.credential.oc1..aaaa..."
+            - name: N8N_EXTERNAL_STORAGE_S3_ACCESS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oci-s3-credentials
+                  key: secret-access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oci-s3-credentials
+                  key: secret-access-key
+            - name: N8N_EXTERNAL_STORAGE_S3_FORCE_PATH_STYLE
+              value: "true"
+            - name: N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS
+              value: "true"
+            - name: DB_POSTGRESDB_SSL_ENABLED
+              value: "true"
+            - name: DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED
+              value: "true"
+            - name: N8N_LOG_LEVEL
+              value: info
+            - name: N8N_LOG_OUTPUT
+              value: json
+            - name: N8N_CONCURRENCY_PRODUCTION_LIMIT
+              value: "100"
+            - name: N8N_WEBHOOK_TIMEOUT
+              value: "300000"
+
+          ports:
+            - containerPort: 5678
+              name: http
+
+          # --- Probes ---
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 6
+
+          resources:
+            limits:
+              cpu: 800m
+              memory: 1Gi
+            requests:
+              cpu: 300m
+              memory: 512Mi
+
+          # Volume mounts for external volumes
+          volumeMounts:
+
+      # External volumes
+      volumes:
+---
+# Source: n8n/templates/deployment-worker.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: n8n-worker
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: worker
+spec:
+  replicas: 10
+  revisionHistoryLimit: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: n8n
+      app.kubernetes.io/instance: n8n
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      annotations:
+        checksum/config: a76b1a454cb37962d3c0dd657130a80ffaebd902cebf5829fe5901f10456490c
+        checksum/secret: 01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b
+      labels:
+        helm.sh/chart: n8n-1.9.0
+        app.kubernetes.io/name: n8n
+        app.kubernetes.io/instance: n8n
+        app.kubernetes.io/version: "stable"
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/component: worker
+    spec:
+      serviceAccountName: n8n-oracle
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 60
+
+      containers:
+        - name: n8n-worker
+          image: "docker.n8n.io/n8nio/n8n:stable"
+          imagePullPolicy: IfNotPresent
+          command: ["n8n"]
+          args:
+            - "worker"
+            - "--concurrency=20"
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - sleep 10
+
+          env:
+            # Shared configuration from ConfigMap
+            # Shared configuration from ConfigMap
+            - name: TZ
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: TZ
+            - name: DB_TYPE
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_TYPE
+            - name: DB_POSTGRESDB_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_DATABASE
+            - name: DB_POSTGRESDB_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_HOST
+            - name: DB_POSTGRESDB_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_PORT
+            - name: DB_POSTGRESDB_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_USER
+            - name: DB_POSTGRESDB_SCHEMA
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_SCHEMA
+            - name: DB_POSTGRESDB_SSL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: DB_POSTGRESDB_SSL
+            # DB_POSTGRESDB_SSL_KEY is not sourced from the ConfigMap because TLS private keys
+            # must not be stored unencrypted. Provide it via config.extraEnv from a Secret.
+            - name: EXECUTIONS_MODE
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: EXECUTIONS_MODE
+            - name: OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS
+            - name: QUEUE_BULL_REDIS_HOST
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_HOST
+            - name: QUEUE_BULL_REDIS_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_PORT
+            - name: QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_TIMEOUT_THRESHOLD
+            - name: QUEUE_BULL_REDIS_TLS
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_BULL_REDIS_TLS
+            - name: QUEUE_WORKER_LOCK_DURATION
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_LOCK_DURATION
+            - name: QUEUE_WORKER_LOCK_RENEW_TIME
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_LOCK_RENEW_TIME
+            - name: QUEUE_WORKER_STALLED_INTERVAL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_STALLED_INTERVAL
+            - name: QUEUE_WORKER_MAX_STALLED_COUNT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: QUEUE_WORKER_MAX_STALLED_COUNT
+            - name: N8N_GRACEFUL_SHUTDOWN_TIMEOUT
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_GRACEFUL_SHUTDOWN_TIMEOUT
+
+            # Webhook URL for resume/waiting URLs
+            
+            - name: WEBHOOK_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: WEBHOOK_URL
+            - name: N8N_EDITOR_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: n8n
+                  key: N8N_EDITOR_BASE_URL
+
+            # Database password (secret)
+            - name: DB_POSTGRESDB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-db-secret
+                  key: password
+
+            # Redis password (secret)
+            - name: QUEUE_BULL_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-redis-secret
+                  key: password
+
+            # Health check settings (not in ConfigMap as it's optional)
+
+            # Redis-specific extra environment variables
+
+            # S3 External Storage
+            
+            # S3 External Storage Configuration
+            - name: N8N_DEFAULT_BINARY_DATA_MODE
+              value: "s3"
+            - name: N8N_AVAILABLE_BINARY_DATA_MODES
+              value: "filesystem,s3"
+            - name: N8N_EXTERNAL_STORAGE_S3_BUCKET_NAME
+              value: "n8n-binary-data"
+            - name: N8N_EXTERNAL_STORAGE_S3_BUCKET_REGION
+              value: "us-ashburn-1"
+            - name: N8N_EXTERNAL_STORAGE_S3_HOST
+              value: "axxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com"
+            - name: N8N_EXTERNAL_STORAGE_S3_ACCESS_KEY
+              value: "ocid1.credential.oc1..aaaa..."
+            - name: AWS_ACCESS_KEY_ID
+              value: "ocid1.credential.oc1..aaaa..."
+            - name: N8N_EXTERNAL_STORAGE_S3_ACCESS_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: oci-s3-credentials
+                  key: secret-access-key
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: oci-s3-credentials
+                  key: secret-access-key
+            - name: N8N_EXTERNAL_STORAGE_S3_FORCE_PATH_STYLE
+              value: "true"
+
+            # Executions Configuration
+            # Executions Configuration
+            - name: EXECUTIONS_TIMEOUT
+              value: "7200"
+            - name: EXECUTIONS_TIMEOUT_MAX
+              value: "3600"
+            - name: EXECUTIONS_DATA_SAVE_ON_ERROR
+              value: "all"
+            - name: EXECUTIONS_DATA_SAVE_ON_SUCCESS
+              value: "all"
+            - name: EXECUTIONS_DATA_SAVE_ON_PROGRESS
+              value: "false"
+            - name: EXECUTIONS_DATA_SAVE_MANUAL_EXECUTIONS
+              value: "true"
+            - name: EXECUTIONS_DATA_PRUNE
+              value: "true"
+            - name: EXECUTIONS_DATA_MAX_AGE
+              value: "2160"
+            - name: EXECUTIONS_DATA_PRUNE_MAX_COUNT
+              value: "100000"
+            - name: EXECUTIONS_DATA_HARD_DELETE_BUFFER
+              value: "1"
+            - name: EXECUTIONS_DATA_PRUNE_HARD_DELETE_INTERVAL
+              value: "15"
+            - name: EXECUTIONS_DATA_PRUNE_SOFT_DELETE_INTERVAL
+              value: "60"
+            - name: N8N_CONCURRENCY_PRODUCTION_LIMIT
+              value: "100"
+
+            # License Configuration
+            
+            # License Configuration
+            - name: N8N_LICENSE_ACTIVATION_KEY
+              value: "REPLACE-WITH-ENTERPRISE-LICENSE"
+
+            # N8N encryption key
+            - name: N8N_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: n8n-core-secrets
+                  key: N8N_ENCRYPTION_KEY
+
+            # Task Runners Configuration
+            
+            - name: N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS
+              value: "true"
+            - name: DB_POSTGRESDB_SSL_ENABLED
+              value: "true"
+            - name: DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED
+              value: "true"
+            - name: N8N_LOG_LEVEL
+              value: info
+            - name: N8N_LOG_OUTPUT
+              value: json
+            - name: N8N_CONCURRENCY_PRODUCTION_LIMIT
+              value: "100"
+            - name: N8N_WEBHOOK_TIMEOUT
+              value: "300000"
+
+          # Worker Health Probes
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pgrep -f 'n8n worker' > /dev/null
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 6
+          livenessProbe:
+            # Workers don't expose an HTTP endpoint; only exec probes are supported here.
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pgrep -f 'n8n worker' > /dev/null
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+
+          resources:
+            limits:
+              cpu: 1000m
+              memory: 2Gi
+            requests:
+              cpu: 500m
+              memory: 1Gi
+
+          # Volume mounts for external volumes
+          volumeMounts:
+
+      # External volumes
+      volumes:
+---
+# Source: n8n/templates/hpa-main.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: n8n-main
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: main
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: n8n-main
+  minReplicas: 3
+  maxReplicas: 20
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60
+---
+# Source: n8n/templates/hpa-webhook-processor.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: n8n-webhook-processor
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: webhook-processor
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: n8n-webhook-processor
+  minReplicas: 5
+  maxReplicas: 50
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 65
+---
+# Source: n8n/templates/hpa-worker.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: n8n-worker
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: worker
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: n8n-worker
+  minReplicas: 10
+  maxReplicas: 100
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+---
+# Source: n8n/templates/ingress-webhook.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: n8n-webhook-processor
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: webhook-processor
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: "n8n.example.com"
+      http:
+        paths:
+          - path: /webhook/
+            pathType: Prefix
+            backend:
+              service:
+                name: n8n-webhook-processor
+                port:
+                  number: 5678
+          - path: /webhook-waiting/
+            pathType: Prefix
+            backend:
+              service:
+                name: n8n-webhook-processor
+                port:
+                  number: 5678
+          - path: /form/
+            pathType: Prefix
+            backend:
+              service:
+                name: n8n-webhook-processor
+                port:
+                  number: 5678
+          - path: /form-waiting/
+            pathType: Prefix
+            backend:
+              service:
+                name: n8n-webhook-processor
+                port:
+                  number: 5678
+---
+# Source: n8n/templates/ingress.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: n8n-main
+  namespace: n8n
+  labels:
+    helm.sh/chart: n8n-1.9.0
+    app.kubernetes.io/name: n8n
+    app.kubernetes.io/instance: n8n
+    app.kubernetes.io/version: "stable"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: "n8n.example.com"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: n8n-main
+                port:
+                  number: 5678

@@ -1,0 +1,202 @@
+# Multi-main queue mode on Oracle Cloud (OKE)
+#
+# Prerequisites on OCI (provision BEFORE helm install):
+#   1. OKE cluster
+#   2. OCI Database for PostgreSQL (n8n app DB — NOT Oracle SQL DB)
+#   3. OCI Cache with Redis OR Redis on OKE / VM
+#   4. OCI Object Storage bucket + Customer Secret Key (S3-compatible API)
+#   5. n8n Enterprise license (required for multi-main + S3 binary storage)
+#
+# Create secrets first — see docs/oracle-oke-deployment.md in the n8n repo
+# or run: ./examples/create-secrets.sh (adapt S3 secret for OCI keys)
+
+multiMain:
+  enabled: true
+  replicas: 3
+
+queueMode:
+  enabled: true
+  workerReplicaCount: 10
+  workerConcurrency: 20
+
+webhookProcessor:
+  enabled: true
+  replicaCount: 5
+  disableProductionWebhooksOnMainProcess: true
+
+hpa:
+  main:
+    enabled: true
+    minReplicas: 3
+    maxReplicas: 20
+    targetCPUUtilizationPercentage: 60
+  worker:
+    enabled: true
+    minReplicas: 10
+    maxReplicas: 100
+    targetCPUUtilizationPercentage: 70
+  webhookProcessor:
+    enabled: true
+    minReplicas: 5
+    maxReplicas: 50
+    targetCPUUtilizationPercentage: 65
+
+# OCI Database for PostgreSQL
+# Console: Databases → PostgreSQL → create DB system → note private endpoint
+database:
+  type: postgresdb
+  useExternal: true
+  host: "postgresql.example.oraclevcn.com"   # <-- OCI PostgreSQL private endpoint
+  port: 5432
+  database: n8n
+  schema: "public"
+  user: n8n
+  passwordSecret:
+    name: "n8n-db-secret"
+    key: "password"
+  ssl:
+    enabled: true
+    rejectUnauthorized: true
+
+# OCI Cache with Redis, or self-managed Redis reachable from OKE
+redis:
+  enabled: true
+  useExternal: true
+  host: "redis.example.oraclevcn.com"        # <-- OCI Cache Redis endpoint
+  port: 6379
+  tls: true                                  # OCI Cache often requires TLS
+  passwordSecret:
+    name: "n8n-redis-secret"
+    key: "password"
+
+# OCI Object Storage via S3-compatible API (NOT AWS IRSA)
+# Docs: https://docs.oracle.com/en-us/iaas/Content/ObjectStorage/s3compat.htm
+s3:
+  enabled: true
+  bucket:
+    name: "n8n-binary-data"                  # <-- your bucket name
+    region: "us-ashburn-1"                   # <-- OCI region identifier
+    host: "axxxxx.compat.objectstorage.us-ashburn-1.oraclecloud.com"  # <-- namespace.compat.objectstorage.{region}.oraclecloud.com
+  auth:
+    autoDetect: false                        # OCI uses Customer Secret Keys, not AWS IRSA
+    accessKeyId: "ocid1.credential.oc1..aaaa..."  # <-- Customer Secret Key access key (or use secret only via extraEnv)
+    secretAccessKeySecret:
+      name: "oci-s3-credentials"
+      key: "secret-access-key"
+  storage:
+    mode: "s3"
+    availableModes: "filesystem,s3"
+    forcePathStyle: true                     # Required for most S3-compatible providers
+
+serviceAccount:
+  create: true
+  name: n8n-oracle
+  # No awsRoleArn — OCI uses access keys, not IRSA
+
+license:
+  enabled: true
+  activationKey: "REPLACE-WITH-ENTERPRISE-LICENSE"
+
+service:
+  type: ClusterIP
+  port: 5678
+  sessionAffinity:
+    enabled: true
+    timeoutSeconds: 14400
+
+resources:
+  main:
+    requests:
+      memory: "2Gi"
+      cpu: "1000m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+  worker:
+    requests:
+      memory: "1Gi"
+      cpu: "500m"
+    limits:
+      memory: "2Gi"
+      cpu: "1000m"
+  webhookProcessor:
+    requests:
+      memory: "512Mi"
+      cpu: "300m"
+    limits:
+      memory: "1Gi"
+      cpu: "800m"
+
+config:
+  timezone: UTC
+  extraEnv:
+    - name: N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS
+      value: "true"
+    - name: DB_POSTGRESDB_SSL_ENABLED
+      value: "true"
+    - name: DB_POSTGRESDB_SSL_REJECT_UNAUTHORIZED
+      value: "true"
+    - name: N8N_LOG_LEVEL
+      value: "info"
+    - name: N8N_LOG_OUTPUT
+      value: "json"
+    - name: N8N_CONCURRENCY_PRODUCTION_LIMIT
+      value: "100"
+    - name: N8N_WEBHOOK_TIMEOUT
+      value: "300000"
+    # OCI Cache Redis TLS — uncomment if your Redis endpoint requires TLS
+    # - name: QUEUE_BULL_REDIS_TLS
+    #   value: "true"
+
+executions:
+  concurrency:
+    productionLimit: 100
+  timeout: 7200
+  data:
+    saveOnError: "all"
+    saveOnSuccess: "all"
+    saveOnProgress: false
+    saveManualExecutions: true
+  pruning:
+    enabled: true
+    maxAge: 2160
+    maxCount: 100000
+
+webhook:
+  timeout: 300000
+
+secretRefs:
+  existingSecret: "n8n-core-secrets"
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 2
+
+networkPolicy:
+  enabled: false   # enable after defining OCI VCN / NSG rules
+
+ingress:
+  enabled: true
+  className: nginx
+  hosts:
+    - host: n8n.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  webhookProcessor:
+    enabled: true
+    className: nginx
+    hosts:
+      - host: n8n.example.com
+        paths:
+          - path: /webhook
+            pathType: Prefix
+          - path: /form
+            pathType: Prefix
+          - path: /form-waiting
+            pathType: Prefix
